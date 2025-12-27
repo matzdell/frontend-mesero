@@ -1,78 +1,120 @@
 // src/pages/TomarPedido.jsx
-import React, { useState, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import { apiFetch } from "../api";
+
+function fmtCLP(n) {
+  return Number(n || 0).toLocaleString("es-CL");
+}
 
 export default function TomarPedido() {
   const { mesa } = useParams();
   const navigate = useNavigate();
+
   const [productos, setProductos] = useState([]);
-  const [categorias, setCategorias] = useState([]);
+  const [categorias, setCategorias] = useState([{ id: null, nombre: "Todos" }]);
   const [categoriaActiva, setCategoriaActiva] = useState(null);
-  const [carrito, setCarrito] = useState([]);
+
+  // carrito como diccionario para operaciones O(1)
+  const [carrito, setCarrito] = useState({}); // { [id]: {id, nombre, precio, cantidad, notas} }
+
   const [loading, setLoading] = useState(true);
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState("");
   const [mostrarResumen, setMostrarResumen] = useState(false);
 
   useEffect(() => {
-    cargarProductos();
+    (async () => {
+      try {
+        setLoading(true);
+        setError("");
+        const [prodsRes, catsRes] = await Promise.all([
+          apiFetch("/api/productos"),
+          apiFetch("/api/productos/categorias"),
+        ]);
+
+        // mesero: solo disponibles
+        const disponibles = (prodsRes || []).filter((p) => p.disponible);
+
+        setProductos(disponibles);
+        setCategorias([{ id: null, nombre: "Todos" }, ...(catsRes || [])]);
+        setCategoriaActiva(null);
+      } catch (err) {
+        setError(err?.message || "Error al cargar productos");
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, []);
 
-  async function cargarProductos() {
-    try {
-      setLoading(true);
-      const [prodsRes, catsRes] = await Promise.all([
-        apiFetch("/api/productos"),
-        apiFetch("/api/productos/categorias"),
-      ]);
+  // helpers carrito
+  const addOne = (p) => {
+    setCarrito((prev) => {
+      const cur = prev[p.id];
+      const cantidad = (cur?.cantidad || 0) + 1;
+      return {
+        ...prev,
+        [p.id]: {
+          id: p.id,
+          nombre: p.nombre,
+          precio: Number(p.precio),
+          cantidad,
+          notas: cur?.notas || "",
+        },
+      };
+    });
+  };
 
-      setProductos(prodsRes.filter(p => p.disponible));
-      setCategorias([{ id: null, nombre: "Todos" }, ...catsRes]);
-      setCategoriaActiva(null);
-    } catch (err) {
-      setError(err.message || "Error al cargar productos");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function agregarAlCarrito(producto) {
-    const existe = carrito.find(item => item.id === producto.id);
-    
-    if (existe) {
-      setCarrito(carrito.map(item =>
-        item.id === producto.id
-          ? { ...item, cantidad: item.cantidad + 1 }
-          : item
-      ));
-    } else {
-      setCarrito([...carrito, { ...producto, cantidad: 1, notas: "" }]);
-    }
-  }
-
-  function cambiarCantidad(productoId, delta) {
-    setCarrito(carrito.map(item => {
-      if (item.id === productoId) {
-        const nuevaCantidad = item.cantidad + delta;
-        return nuevaCantidad > 0 ? { ...item, cantidad: nuevaCantidad } : null;
+  const subOne = (id) => {
+    setCarrito((prev) => {
+      const cur = prev[id];
+      if (!cur) return prev;
+      const nextQty = cur.cantidad - 1;
+      if (nextQty <= 0) {
+        const { [id]: _removed, ...rest } = prev;
+        return rest;
       }
-      return item;
-    }).filter(Boolean));
-  }
+      return { ...prev, [id]: { ...cur, cantidad: nextQty } };
+    });
+  };
 
-  function cambiarNotas(productoId, notas) {
-    setCarrito(carrito.map(item =>
-      item.id === productoId ? { ...item, notas } : item
-    ));
-  }
+  const setNotas = (id, notas) => {
+    setCarrito((prev) => {
+      const cur = prev[id];
+      if (!cur) return prev;
+      return { ...prev, [id]: { ...cur, notas } };
+    });
+  };
 
-  function eliminarDelCarrito(productoId) {
-    setCarrito(carrito.filter(item => item.id !== productoId));
-  }
+  const removeItem = (id) => {
+    setCarrito((prev) => {
+      const { [id]: _removed, ...rest } = prev;
+      return rest;
+    });
+  };
+
+  const clearCart = () => setCarrito({});
+
+  // derivados
+  const productosFiltrados = useMemo(() => {
+    if (categoriaActiva == null) return productos;
+    return productos.filter((p) => p.id_categoria === categoriaActiva);
+  }, [productos, categoriaActiva]);
+
+  const itemsCarrito = useMemo(() => Object.values(carrito), [carrito]);
+
+  const totalItems = useMemo(
+    () => itemsCarrito.reduce((sum, it) => sum + (it.cantidad || 0), 0),
+    [itemsCarrito]
+  );
+
+  const totalPrecio = useMemo(
+    () => itemsCarrito.reduce((sum, it) => sum + (it.precio * it.cantidad), 0),
+    [itemsCarrito]
+  );
 
   async function enviarPedido() {
-    if (carrito.length === 0) {
+    if (itemsCarrito.length === 0) {
       setError("Agrega al menos un producto");
       return;
     }
@@ -81,36 +123,25 @@ export default function TomarPedido() {
       setEnviando(true);
       setError("");
 
-      const detalles = carrito.map(item => ({
-        id_producto: item.id,
-        cantidad: item.cantidad,
-        notas: item.notas || "",
-        cliente_nro: 1, // Por defecto cliente 1
+      const detalles = itemsCarrito.map((it) => ({
+        id_producto: it.id,
+        cantidad: it.cantidad,
+        notas: it.notas || "",
+        cliente_nro: 1, // por defecto
       }));
 
       await apiFetch("/api/comandas", {
         method: "POST",
-        body: {
-          mesa,
-          detalles,
-        },
+        body: { mesa, detalles },
       });
 
-      // Éxito
       navigate("/mesas");
     } catch (err) {
-      setError(err.message || "Error al enviar pedido");
+      setError(err?.message || "Error al enviar pedido");
     } finally {
       setEnviando(false);
     }
   }
-
-  const productosFiltrados = categoriaActiva === null
-    ? productos
-    : productos.filter(p => p.id_categoria === categoriaActiva);
-
-  const totalItems = carrito.reduce((sum, item) => sum + item.cantidad, 0);
-  const totalPrecio = carrito.reduce((sum, item) => sum + (item.precio * item.cantidad), 0);
 
   if (loading) {
     return (
@@ -150,12 +181,12 @@ export default function TomarPedido() {
           </div>
         )}
 
-        {/* Categorías */}
+        {/* Categorías (igual idea, menos lógica) */}
         <div className="categorias-tabs">
-          {categorias.map(cat => (
+          {categorias.map((cat) => (
             <button
-              key={cat.id || 'todos'}
-              className={`categoria-tab ${categoriaActiva === cat.id ? 'active' : ''}`}
+              key={cat.id ?? "todos"}
+              className={`categoria-tab ${categoriaActiva === cat.id ? "active" : ""}`}
               onClick={() => setCategoriaActiva(cat.id)}
             >
               {cat.nombre}
@@ -163,58 +194,51 @@ export default function TomarPedido() {
           ))}
         </div>
 
-        {/* Productos */}
+        {/* Productos: + / - siempre disponibles (menos taps y menos confusión) */}
         <div className="productos-grid">
-          {productosFiltrados.map(producto => {
-            const enCarrito = carrito.find(item => item.id === producto.id);
-            
+          {productosFiltrados.map((p) => {
+            const qty = carrito[p.id]?.cantidad || 0;
+
             return (
-              <div
-                key={producto.id}
-                className="producto-card"
-                onClick={() => agregarAlCarrito(producto)}
-              >
-                <div className="producto-nombre">{producto.nombre}</div>
-                <div className="producto-precio">
-                  ${Number(producto.precio).toLocaleString("es-CL")}
+              <div key={p.id} className="producto-card">
+                <div
+                  style={{ cursor: "pointer" }}
+                  onClick={() => addOne(p)}
+                  title="Toca para agregar"
+                >
+                  <div className="producto-nombre">{p.nombre}</div>
+                  <div className="producto-precio">${fmtCLP(p.precio)}</div>
                 </div>
-                
-                {enCarrito && (
-                  <div className="producto-cantidad">
-                    <button
-                      className="cantidad-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        cambiarCantidad(producto.id, -1);
-                      }}
-                    >
-                      −
-                    </button>
-                    <span className="cantidad-numero">{enCarrito.cantidad}</span>
-                    <button
-                      className="cantidad-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        cambiarCantidad(producto.id, 1);
-                      }}
-                    >
-                      +
-                    </button>
-                  </div>
-                )}
+
+                <div className="producto-cantidad" style={{ marginTop: 10 }}>
+                  <button
+                    className="cantidad-btn"
+                    onClick={() => subOne(p.id)}
+                    disabled={qty === 0}
+                    aria-label="Quitar uno"
+                  >
+                    −
+                  </button>
+                  <span className="cantidad-numero">{qty}</span>
+                  <button
+                    className="cantidad-btn"
+                    onClick={() => addOne(p)}
+                    aria-label="Agregar uno"
+                  >
+                    +
+                  </button>
+                </div>
               </div>
             );
           })}
         </div>
 
         {/* Carrito flotante */}
-        {carrito.length > 0 && (
+        {totalItems > 0 && (
           <div className="carrito-flotante" onClick={() => setMostrarResumen(true)}>
             <div className="carrito-badge">{totalItems}</div>
             <span>Ver pedido</span>
-            <span style={{ fontWeight: 800 }}>
-              ${totalPrecio.toLocaleString("es-CL")}
-            </span>
+            <span style={{ fontWeight: 800 }}>${fmtCLP(totalPrecio)}</span>
           </div>
         )}
 
@@ -234,51 +258,73 @@ export default function TomarPedido() {
               </div>
 
               <ul className="item-list">
-                {carrito.map(item => (
-                  <li key={item.id}>
+                {itemsCarrito.map((it) => (
+                  <li key={it.id}>
                     <div className="item-info">
                       <div className="item-nombre">
-                        {item.cantidad}x {item.nombre}
+                        {it.cantidad}x {it.nombre}
                       </div>
                       <div className="item-detalles">
-                        ${Number(item.precio * item.cantidad).toLocaleString("es-CL")}
+                        ${fmtCLP(it.precio * it.cantidad)}
                       </div>
+
                       <textarea
                         className="form-control"
                         placeholder="Notas (opcional)"
-                        value={item.notas}
-                        onChange={(e) => cambiarNotas(item.id, e.target.value)}
+                        value={it.notas}
+                        onChange={(e) => setNotas(it.id, e.target.value)}
                         style={{ marginTop: 8, fontSize: 13 }}
                         rows={2}
                       />
                     </div>
-                    <button
-                      className="btn btn-danger"
-                      onClick={() => eliminarDelCarrito(item.id)}
-                      style={{ padding: "8px 12px" }}
-                    >
-                      🗑️
-                    </button>
+
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <button
+                        className="btn btn-danger"
+                        onClick={() => removeItem(it.id)}
+                        style={{ padding: "8px 12px" }}
+                      >
+                        🗑️
+                      </button>
+
+                      <div className="producto-cantidad">
+                        <button className="cantidad-btn" onClick={() => subOne(it.id)}>
+                          −
+                        </button>
+                        <span className="cantidad-numero">{it.cantidad}</span>
+                        <button
+                          className="cantidad-btn"
+                          onClick={() => {
+                            // reusar addOne con "producto fake"
+                            addOne({ id: it.id, nombre: it.nombre, precio: it.precio });
+                          }}
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
                   </li>
                 ))}
               </ul>
 
-              <div style={{ 
-                marginTop: 20, 
-                paddingTop: 20, 
-                borderTop: "2px solid rgba(255,255,255,0.1)",
-                fontSize: 20,
-                fontWeight: 800,
-                textAlign: "right"
-              }}>
-                Total: ${totalPrecio.toLocaleString("es-CL")}
+              <div
+                style={{
+                  marginTop: 20,
+                  paddingTop: 20,
+                  borderTop: "2px solid rgba(255,255,255,0.1)",
+                  fontSize: 20,
+                  fontWeight: 800,
+                  textAlign: "right",
+                }}
+              >
+                Total: ${fmtCLP(totalPrecio)}
               </div>
 
               <div style={{ marginTop: 24, display: "flex", gap: 12 }}>
                 <button
                   className="btn btn-danger"
                   onClick={() => {
-                    setCarrito([]);
+                    clearCart();
                     setMostrarResumen(false);
                   }}
                   style={{ flex: 1 }}
