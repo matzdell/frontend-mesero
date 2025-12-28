@@ -1,4 +1,4 @@
-// src/pages/TomarPedido.jsx - MEJORADO CON CLIENTES INDIVIDUALES
+// src/pages/TomarPedido.jsx - VERSIÓN MEJORADA CON ORDEN Y OPTIMIZACIONES
 import React, { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { apiFetch } from "../api";
@@ -10,7 +10,6 @@ export default function TomarPedido() {
   const [categorias, setCategorias] = useState([]);
   const [categoriaActiva, setCategoriaActiva] = useState(null);
   
-  // 🆕 NUEVO: Gestión de clientes y pedidos separados
   const [clientes, setClientes] = useState([
     { id: 1, nombre: "Cliente 1", pedido: [] }
   ]);
@@ -20,6 +19,9 @@ export default function TomarPedido() {
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState("");
   const [mostrarResumen, setMostrarResumen] = useState(false);
+  
+  // 🆕 BÚSQUEDA DE PRODUCTOS
+  const [busqueda, setBusqueda] = useState("");
 
   const user = JSON.parse(localStorage.getItem("user") || "{}");
 
@@ -36,7 +38,27 @@ export default function TomarPedido() {
       ]);
 
       setProductos(prodsRes.filter(p => p.disponible));
-      setCategorias([{ id: null, nombre: "Todos" }, ...catsRes]);
+      
+      // 🆕 ORDENAR CATEGORÍAS SEGÚN REQUERIMIENTO
+      const ordenCategorias = {
+        'Todos': 0,
+        'Principal': 1,
+        'Agregados': 2,
+        'Ensalada': 3,
+        'Bebida': 4,
+        'Postre': 5
+      };
+      
+      const categoriasOrdenadas = [
+        { id: null, nombre: "Todos" },
+        ...catsRes.sort((a, b) => {
+          const ordenA = ordenCategorias[a.nombre] || 999;
+          const ordenB = ordenCategorias[b.nombre] || 999;
+          return ordenA - ordenB;
+        })
+      ];
+      
+      setCategorias(categoriasOrdenadas);
       setCategoriaActiva(null);
     } catch (err) {
       setError(err.message || "Error al cargar productos");
@@ -45,34 +67,47 @@ export default function TomarPedido() {
     }
   }
 
-  // 🆕 AGREGAR NUEVO CLIENTE
+  // 🆕 RENOMBRAR CLIENTE
+  function renombrarCliente(clienteId, nuevoNombre) {
+    if (!nuevoNombre.trim()) return;
+    
+    setClientes(clientes.map(c => 
+      c.id === clienteId ? { ...c, nombre: nuevoNombre.trim() } : c
+    ));
+  }
+
   function agregarCliente() {
     const nuevoId = Math.max(...clientes.map(c => c.id)) + 1;
+    const nuevoNombre = `Cliente ${nuevoId}`;
+    
     setClientes([...clientes, { 
       id: nuevoId, 
-      nombre: `Cliente ${nuevoId}`, 
+      nombre: nuevoNombre, 
       pedido: [] 
     }]);
     setClienteActivo(nuevoId);
   }
 
-  // 🆕 ELIMINAR CLIENTE
   function eliminarCliente(clienteId) {
     if (clientes.length === 1) {
       alert("Debe haber al menos un cliente");
       return;
     }
     
-    if (window.confirm("¿Eliminar este cliente y su pedido?")) {
-      const nuevosClientes = clientes.filter(c => c.id !== clienteId);
-      setClientes(nuevosClientes);
-      if (clienteActivo === clienteId) {
-        setClienteActivo(nuevosClientes[0].id);
+    const cliente = clientes.find(c => c.id === clienteId);
+    if (cliente.pedido.length > 0) {
+      if (!window.confirm(`¿Eliminar a ${cliente.nombre} y sus ${cliente.pedido.length} productos?`)) {
+        return;
       }
+    }
+    
+    const nuevosClientes = clientes.filter(c => c.id !== clienteId);
+    setClientes(nuevosClientes);
+    if (clienteActivo === clienteId) {
+      setClienteActivo(nuevosClientes[0].id);
     }
   }
 
-  // 🆕 AGREGAR AL PEDIDO DEL CLIENTE ACTIVO
   function agregarAlPedido(producto) {
     setClientes(clientes.map(cliente => {
       if (cliente.id !== clienteActivo) return cliente;
@@ -95,9 +130,17 @@ export default function TomarPedido() {
         };
       }
     }));
+    
+    // 🆕 FEEDBACK VISUAL
+    const card = document.querySelector(`[data-producto-id="${producto.id}"]`);
+    if (card) {
+      card.style.transform = 'scale(0.95)';
+      setTimeout(() => {
+        card.style.transform = 'scale(1)';
+      }, 100);
+    }
   }
 
-  // 🆕 CAMBIAR CANTIDAD EN PEDIDO DEL CLIENTE
   function cambiarCantidad(clienteId, productoId, delta) {
     setClientes(clientes.map(cliente => {
       if (cliente.id !== clienteId) return cliente;
@@ -115,7 +158,6 @@ export default function TomarPedido() {
     }));
   }
 
-  // 🆕 CAMBIAR NOTAS
   function cambiarNotas(clienteId, productoId, notas) {
     setClientes(clientes.map(cliente => {
       if (cliente.id !== clienteId) return cliente;
@@ -129,7 +171,6 @@ export default function TomarPedido() {
     }));
   }
 
-  // 🆕 ELIMINAR PRODUCTO DEL PEDIDO
   function eliminarDelPedido(clienteId, productoId) {
     setClientes(clientes.map(cliente => {
       if (cliente.id !== clienteId) return cliente;
@@ -141,11 +182,60 @@ export default function TomarPedido() {
     }));
   }
 
+  // 🆕 COPIAR PEDIDO DE UN CLIENTE A OTRO
+  function copiarPedido(clienteOrigenId, clienteDestinoId) {
+    const clienteOrigen = clientes.find(c => c.id === clienteOrigenId);
+    if (!clienteOrigen || clienteOrigen.pedido.length === 0) return;
+    
+    setClientes(clientes.map(cliente => {
+      if (cliente.id === clienteDestinoId) {
+        // Agregar productos del origen al destino
+        const nuevosPedidos = [...cliente.pedido];
+        
+        clienteOrigen.pedido.forEach(itemOrigen => {
+          const existe = nuevosPedidos.find(item => item.id === itemOrigen.id);
+          if (existe) {
+            // Sumar cantidades
+            nuevosPedidos.forEach((item, idx) => {
+              if (item.id === itemOrigen.id) {
+                nuevosPedidos[idx] = {
+                  ...item,
+                  cantidad: item.cantidad + itemOrigen.cantidad
+                };
+              }
+            });
+          } else {
+            // Agregar nuevo
+            nuevosPedidos.push({ ...itemOrigen });
+          }
+        });
+        
+        return { ...cliente, pedido: nuevosPedidos };
+      }
+      return cliente;
+    }));
+  }
+
+  // 🆕 DUPLICAR PEDIDO (para "lo mismo que el cliente 1")
+  function duplicarPedido(clienteId) {
+    const cliente = clientes.find(c => c.id === clienteId);
+    if (!cliente || cliente.pedido.length === 0) return;
+    
+    const nuevoId = Math.max(...clientes.map(c => c.id)) + 1;
+    setClientes([...clientes, {
+      id: nuevoId,
+      nombre: `Cliente ${nuevoId}`,
+      pedido: cliente.pedido.map(item => ({ ...item }))
+    }]);
+    setClienteActivo(nuevoId);
+  }
+
   async function enviarPedido() {
     const totalItems = clientes.reduce((sum, c) => sum + c.pedido.length, 0);
     
     if (totalItems === 0) {
       setError("Agrega al menos un producto");
+      setTimeout(() => setError(""), 3000);
       return;
     }
 
@@ -153,7 +243,6 @@ export default function TomarPedido() {
       setEnviando(true);
       setError("");
 
-      // 🆕 COMBINAR TODOS LOS PEDIDOS CON CLIENTE_NRO
       const detalles = [];
       clientes.forEach(cliente => {
         cliente.pedido.forEach(item => {
@@ -161,15 +250,9 @@ export default function TomarPedido() {
             id_producto: item.id,
             cantidad: item.cantidad,
             notas: item.notas || "",
-            cliente_nro: cliente.id, // 👈 IDENTIFICADOR DEL CLIENTE
+            cliente_nro: cliente.id,
           });
         });
-      });
-
-      console.log("Enviando pedido con clientes:", {
-        mesa,
-        detalles,
-        id_mesero: user.id,
       });
 
       await apiFetch("/api/comandas", {
@@ -186,16 +269,23 @@ export default function TomarPedido() {
     } catch (err) {
       console.error("Error al enviar pedido:", err);
       setError(err.message || "Error al enviar pedido");
+      setTimeout(() => setError(""), 5000);
     } finally {
       setEnviando(false);
     }
   }
 
-  const productosFiltrados = categoriaActiva === null
+  // 🆕 FILTRADO MEJORADO (con búsqueda)
+  let productosFiltrados = categoriaActiva === null
     ? productos
     : productos.filter(p => p.id_categoria === categoriaActiva);
+  
+  if (busqueda.trim()) {
+    productosFiltrados = productosFiltrados.filter(p =>
+      p.nombre.toLowerCase().includes(busqueda.toLowerCase())
+    );
+  }
 
-  // 🆕 CALCULAR TOTALES
   const clienteSeleccionado = clientes.find(c => c.id === clienteActivo);
   const totalItemsActivo = clienteSeleccionado?.pedido.reduce((sum, item) => sum + item.cantidad, 0) || 0;
   const totalItemsGeneral = clientes.reduce((sum, c) => 
@@ -216,7 +306,10 @@ export default function TomarPedido() {
             </div>
           </div>
         </header>
-        <div className="loading">Cargando productos...</div>
+        <div className="loading">
+          <div className="spinner"></div>
+          <p>Cargando productos...</p>
+        </div>
       </div>
     );
   }
@@ -237,52 +330,89 @@ export default function TomarPedido() {
 
       <div className="page">
         {error && (
-          <div className="alert alert-error">
+          <div className="alert alert-error" style={{ animation: 'slideIn 0.3s' }}>
             <span>⚠️</span>
             {error}
           </div>
         )}
 
-        {/* 🆕 SELECTOR DE CLIENTES */}
+        {/* 🆕 SELECTOR DE CLIENTES MEJORADO */}
         <div className="clientes-selector">
           <div className="clientes-tabs">
             {clientes.map(cliente => {
               const itemsCliente = cliente.pedido.reduce((sum, item) => sum + item.cantidad, 0);
               
               return (
-                <button
-                  key={cliente.id}
-                  className={`cliente-tab ${clienteActivo === cliente.id ? 'active' : ''}`}
-                  onClick={() => setClienteActivo(cliente.id)}
-                >
-                  <div className="cliente-tab-nombre">
-                    👤 {cliente.nombre}
-                  </div>
-                  {itemsCliente > 0 && (
-                    <span className="cliente-tab-badge">{itemsCliente}</span>
-                  )}
-                  {clientes.length > 1 && (
+                <div key={cliente.id} className="cliente-tab-container">
+                  <button
+                    className={`cliente-tab ${clienteActivo === cliente.id ? 'active' : ''}`}
+                    onClick={() => setClienteActivo(cliente.id)}
+                    onDoubleClick={() => {
+                      const nuevoNombre = prompt("Nuevo nombre:", cliente.nombre);
+                      if (nuevoNombre) renombrarCliente(cliente.id, nuevoNombre);
+                    }}
+                  >
+                    <div className="cliente-tab-nombre">
+                      👤 {cliente.nombre}
+                    </div>
+                    {itemsCliente > 0 && (
+                      <span className="cliente-tab-badge">{itemsCliente}</span>
+                    )}
+                    {clientes.length > 1 && (
+                      <button
+                        className="cliente-tab-delete"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          eliminarCliente(cliente.id);
+                        }}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </button>
+                  
+                  {/* 🆕 MENÚ CONTEXTUAL */}
+                  {cliente.pedido.length > 0 && clienteActivo === cliente.id && (
                     <button
-                      className="cliente-tab-delete"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        eliminarCliente(cliente.id);
-                      }}
+                      className="cliente-tab-menu"
+                      onClick={() => duplicarPedido(cliente.id)}
+                      title="Duplicar este pedido a nuevo cliente"
                     >
-                      ✕
+                      📋
                     </button>
                   )}
-                </button>
+                </div>
               );
             })}
             
             <button className="cliente-tab-add" onClick={agregarCliente}>
-              ➕ Agregar
+              ➕ Cliente
             </button>
+          </div>
+          
+          {/* 🆕 TIP VISUAL */}
+          <div className="cliente-tip">
+            <small>💡 Doble clic en un cliente para renombrar</small>
           </div>
         </div>
 
-        {/* Categorías */}
+        {/* 🆕 BARRA DE BÚSQUEDA */}
+        <div className="search-bar">
+          <input
+            type="text"
+            placeholder="🔍 Buscar producto..."
+            value={busqueda}
+            onChange={(e) => setBusqueda(e.target.value)}
+            className="search-input"
+          />
+          {busqueda && (
+            <button className="search-clear" onClick={() => setBusqueda("")}>
+              ✕
+            </button>
+          )}
+        </div>
+
+        {/* Categorías (ORDEN ESPECÍFICO) */}
         <div className="categorias-tabs">
           {categorias.map(cat => (
             <button
@@ -297,65 +427,86 @@ export default function TomarPedido() {
 
         {/* Productos */}
         <div className="productos-grid">
-          {productosFiltrados.map(producto => {
-            const enPedido = clienteSeleccionado?.pedido.find(item => item.id === producto.id);
-            
-            return (
-              <div
-                key={producto.id}
-                className="producto-card"
-                onClick={() => agregarAlPedido(producto)}
-              >
-                <div className="producto-nombre">{producto.nombre}</div>
-                <div className="producto-precio">
-                  ${Number(producto.precio).toLocaleString("es-CL")}
-                </div>
-                
-                {enPedido && (
-                  <div className="producto-cantidad">
-                    <button
-                      className="cantidad-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        cambiarCantidad(clienteActivo, producto.id, -1);
-                      }}
-                    >
-                      −
-                    </button>
-                    <span className="cantidad-numero">{enPedido.cantidad}</span>
-                    <button
-                      className="cantidad-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        cambiarCantidad(clienteActivo, producto.id, 1);
-                      }}
-                    >
-                      +
-                    </button>
+          {productosFiltrados.length === 0 ? (
+            <div className="empty-state">
+              <p>No se encontraron productos</p>
+            </div>
+          ) : (
+            productosFiltrados.map(producto => {
+              const enPedido = clienteSeleccionado?.pedido.find(item => item.id === producto.id);
+              
+              return (
+                <div
+                  key={producto.id}
+                  data-producto-id={producto.id}
+                  className={`producto-card ${enPedido ? 'en-pedido' : ''}`}
+                  onClick={() => agregarAlPedido(producto)}
+                >
+                  <div className="producto-nombre">{producto.nombre}</div>
+                  <div className="producto-precio">
+                    ${Number(producto.precio).toLocaleString("es-CL")}
                   </div>
-                )}
-              </div>
-            );
-          })}
+                  
+                  {enPedido && (
+                    <div className="producto-cantidad">
+                      <button
+                        className="cantidad-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          cambiarCantidad(clienteActivo, producto.id, -1);
+                        }}
+                      >
+                        −
+                      </button>
+                      <span className="cantidad-numero">{enPedido.cantidad}</span>
+                      <button
+                        className="cantidad-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          cambiarCantidad(clienteActivo, producto.id, 1);
+                        }}
+                      >
+                        +
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
         </div>
 
-        {/* Carrito flotante */}
+        {/* Carrito flotante MEJORADO */}
         {totalItemsGeneral > 0 && (
           <div className="carrito-flotante" onClick={() => setMostrarResumen(true)}>
-            <div className="carrito-badge">{totalItemsGeneral}</div>
-            <span>Ver pedido completo</span>
-            <span style={{ fontWeight: 800 }}>
+            <div className="carrito-info">
+              <div className="carrito-badge">{totalItemsGeneral}</div>
+              <div className="carrito-texto">
+                <div className="carrito-label">Ver pedido completo</div>
+                <div className="carrito-clientes">
+                  {clientes.filter(c => c.pedido.length > 0).length} {
+                    clientes.filter(c => c.pedido.length > 0).length === 1 ? 'cliente' : 'clientes'
+                  }
+                </div>
+              </div>
+            </div>
+            <div className="carrito-total">
               ${totalPrecioGeneral.toLocaleString("es-CL")}
-            </span>
+            </div>
           </div>
         )}
 
-        {/* 🆕 MODAL RESUMEN MEJORADO */}
+        {/* MODAL RESUMEN MEJORADO */}
         {mostrarResumen && (
           <div className="modal-overlay" onClick={() => setMostrarResumen(false)}>
             <div className="modal modal-large" onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
-                <h2>Resumen del pedido - Mesa {mesa}</h2>
+                <div>
+                  <h2>Resumen del pedido</h2>
+                  <p style={{ fontSize: 14, color: '#94a3b8', margin: '4px 0 0 0' }}>
+                    Mesa {mesa} • {clientes.filter(c => c.pedido.length > 0).length} clientes
+                  </p>
+                </div>
                 <button className="modal-close" onClick={() => setMostrarResumen(false)}>
                   ✕
                 </button>
@@ -390,13 +541,13 @@ export default function TomarPedido() {
                                 </span>
                               </div>
                               
-                              <textarea
+                              <input
+                                type="text"
                                 className="form-control"
-                                placeholder="Notas (opcional)"
+                                placeholder="💬 Notas (ej: sin cebolla, extra salsa...)"
                                 value={item.notas}
                                 onChange={(e) => cambiarNotas(cliente.id, item.id, e.target.value)}
                                 style={{ marginTop: 8, fontSize: 13 }}
-                                rows={2}
                               />
                             </div>
                             
@@ -416,16 +567,20 @@ export default function TomarPedido() {
 
               <div className="resumen-total">
                 <div className="total-row">
-                  <span>Total items:</span>
+                  <span>Total de items</span>
                   <span>{totalItemsGeneral}</span>
                 </div>
+                <div className="total-row">
+                  <span>Total de clientes</span>
+                  <span>{clientes.filter(c => c.pedido.length > 0).length}</span>
+                </div>
                 <div className="total-row total-final">
-                  <span>Total a pagar:</span>
+                  <span>Total a pagar</span>
                   <span>${totalPrecioGeneral.toLocaleString("es-CL")}</span>
                 </div>
               </div>
 
-              <div style={{ marginTop: 24, display: "flex", gap: 12 }}>
+              <div className="modal-actions">
                 <button
                   className="btn btn-danger"
                   onClick={() => {
@@ -435,17 +590,24 @@ export default function TomarPedido() {
                       setMostrarResumen(false);
                     }
                   }}
-                  style={{ flex: 1 }}
                 >
                   Cancelar todo
                 </button>
                 <button
-                  className="btn btn-success"
+                  className="btn btn-success btn-large"
                   onClick={enviarPedido}
                   disabled={enviando}
-                  style={{ flex: 2 }}
                 >
-                  {enviando ? "Enviando..." : "Enviar a cocina"}
+                  {enviando ? (
+                    <>
+                      <span className="spinner-small"></span>
+                      Enviando...
+                    </>
+                  ) : (
+                    <>
+                      ✓ Enviar a cocina
+                    </>
+                  )}
                 </button>
               </div>
             </div>
@@ -453,8 +615,52 @@ export default function TomarPedido() {
         )}
       </div>
 
-      {/* 🆕 ESTILOS ADICIONALES */}
+      {/* ESTILOS MEJORADOS */}
       <style>{`
+        @keyframes slideIn {
+          from {
+            transform: translateY(-20px);
+            opacity: 0;
+          }
+          to {
+            transform: translateY(0);
+            opacity: 1;
+          }
+        }
+
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+
+        .loading {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          min-height: 300px;
+          gap: 20px;
+        }
+
+        .spinner {
+          width: 50px;
+          height: 50px;
+          border: 4px solid rgba(255, 255, 255, 0.1);
+          border-top-color: #3b82f6;
+          border-radius: 50%;
+          animation: spin 0.8s linear infinite;
+        }
+
+        .spinner-small {
+          display: inline-block;
+          width: 16px;
+          height: 16px;
+          border: 2px solid rgba(255, 255, 255, 0.3);
+          border-top-color: white;
+          border-radius: 50%;
+          animation: spin 0.6s linear infinite;
+          margin-right: 8px;
+        }
+
         .clientes-selector {
           margin-bottom: 20px;
         }
@@ -464,6 +670,22 @@ export default function TomarPedido() {
           gap: 8px;
           overflow-x: auto;
           padding-bottom: 8px;
+          scrollbar-width: thin;
+        }
+
+        .clientes-tabs::-webkit-scrollbar {
+          height: 6px;
+        }
+
+        .clientes-tabs::-webkit-scrollbar-thumb {
+          background: rgba(255, 255, 255, 0.3);
+          border-radius: 3px;
+        }
+
+        .cliente-tab-container {
+          position: relative;
+          display: flex;
+          gap: 4px;
         }
 
         .cliente-tab {
@@ -531,6 +753,23 @@ export default function TomarPedido() {
           transform: scale(1.1);
         }
 
+        .cliente-tab-menu {
+          width: 36px;
+          height: 100%;
+          background: rgba(16, 185, 129, 0.2);
+          border: 2px solid rgba(16, 185, 129, 0.3);
+          border-radius: 8px;
+          color: #10b981;
+          font-size: 16px;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+
+        .cliente-tab-menu:hover {
+          background: rgba(16, 185, 129, 0.3);
+          transform: scale(1.05);
+        }
+
         .cliente-tab-add {
           display: flex;
           align-items: center;
@@ -553,10 +792,121 @@ export default function TomarPedido() {
           transform: scale(1.05);
         }
 
+        .cliente-tip {
+          margin-top: 8px;
+          text-align: center;
+          color: #94a3b8;
+          font-size: 12px;
+        }
+
+        .search-bar {
+          position: relative;
+          margin-bottom: 16px;
+        }
+
+        .search-input {
+          width: 100%;
+          padding: 14px 40px 14px 16px;
+          background: rgba(255, 255, 255, 0.05);
+          border: 2px solid rgba(255, 255, 255, 0.1);
+          border-radius: 12px;
+          color: white;
+          font-size: 15px;
+          transition: all 0.2s;
+        }
+
+        .search-input:focus {
+          outline: none;
+          border-color: #3b82f6;
+          background: rgba(255, 255, 255, 0.08);
+        }
+
+        .search-input::placeholder {
+          color: #64748b;
+        }
+
+        .search-clear {
+          position: absolute;
+          right: 12px;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 28px;
+          height: 28px;
+          border-radius: 50%;
+          background: rgba(239, 68, 68, 0.2);
+          border: none;
+          color: #ef4444;
+          font-size: 14px;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+
+        .search-clear:hover {
+          background: #ef4444;
+          color: white;
+        }
+
+        .empty-state {
+          grid-column: 1 / -1;
+          text-align: center;
+          padding: 60px 20px;
+          color: #64748b;
+          font-size: 16px;
+        }
+
+        .producto-card {
+          transition: all 0.2s;
+        }
+
+        .producto-card.en-pedido {
+          background: rgba(59, 130, 246, 0.1);
+          border-color: #3b82f6;
+        }
+
+        .carrito-flotante {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+          padding: 16px 20px;
+        }
+
+        .carrito-info {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          flex: 1;
+        }
+
+        .carrito-texto {
+          flex: 1;
+        }
+
+        .carrito-label {
+          font-size: 15px;
+          font-weight: 600;
+        }
+
+        .carrito-clientes {
+          font-size: 12px;
+          color: rgba(255, 255, 255, 0.7);
+          margin-top: 2px;
+        }
+
+        .carrito-total {
+          font-size: 24px;
+          font-weight: 800;
+          color: #10b981;
+        }
+
         .modal-large {
           max-width: 700px;
           max-height: 85vh;
           overflow-y: auto;
+        }
+
+        .modal-header p {
+          margin: 0;
         }
 
         .resumen-por-clientes {
@@ -665,6 +1015,29 @@ export default function TomarPedido() {
           color: #10b981;
         }
 
+        .modal-actions {
+          margin-top: 24px;
+          display: flex;
+          gap: 12px;
+        }
+
+        .modal-actions .btn-danger {
+          flex: 1;
+        }
+
+        .modal-actions .btn-success {
+          flex: 2;
+        }
+
+        .btn-large {
+          padding: 16px 24px;
+          font-size: 17px;
+          font-weight: 700;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+
         .btn-sm {
           padding: 8px 12px;
           font-size: 14px;
@@ -674,6 +1047,19 @@ export default function TomarPedido() {
           .cliente-tab {
             min-width: 120px;
             padding: 10px 12px;
+          }
+
+          .carrito-total {
+            font-size: 20px;
+          }
+
+          .modal-actions {
+            flex-direction: column;
+          }
+
+          .modal-actions .btn-danger,
+          .modal-actions .btn-success {
+            flex: 1;
           }
         }
       `}</style>
