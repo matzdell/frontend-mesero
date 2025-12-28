@@ -1,4 +1,4 @@
-// src/pages/TomarPedido.jsx - VERSIÓN MEJORADA CON ORDEN Y OPTIMIZACIONES
+// src/pages/TomarPedido.jsx - ORDENAMIENTO CORREGIDO
 import React, { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { apiFetch } from "../api";
@@ -19,8 +19,6 @@ export default function TomarPedido() {
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState("");
   const [mostrarResumen, setMostrarResumen] = useState(false);
-  
-  // 🆕 BÚSQUEDA DE PRODUCTOS
   const [busqueda, setBusqueda] = useState("");
 
   const user = JSON.parse(localStorage.getItem("user") || "{}");
@@ -39,24 +37,34 @@ export default function TomarPedido() {
 
       setProductos(prodsRes.filter(p => p.disponible));
       
-      // 🆕 ORDENAR CATEGORÍAS SEGÚN REQUERIMIENTO
+      // 🔧 CORRECCIÓN: Ordenar categorías (case-insensitive)
       const ordenCategorias = {
-        'Todos': 0,
-        'Principal': 1,
-        'Agregados': 2,
-        'Ensalada': 3,
-        'Bebida': 4,
-        'Postre': 5
+        'todos': 0,
+        'principal': 1,
+        'agregados': 2,
+        'agregado': 2, // por si acaso está en singular
+        'ensalada': 3,
+        'bebida': 4,
+        'postre': 5
       };
       
       const categoriasOrdenadas = [
         { id: null, nombre: "Todos" },
         ...catsRes.sort((a, b) => {
-          const ordenA = ordenCategorias[a.nombre] || 999;
-          const ordenB = ordenCategorias[b.nombre] || 999;
+          const nombreA = a.nombre.toLowerCase().trim();
+          const nombreB = b.nombre.toLowerCase().trim();
+          const ordenA = ordenCategorias[nombreA] !== undefined ? ordenCategorias[nombreA] : 999;
+          const ordenB = ordenCategorias[nombreB] !== undefined ? ordenCategorias[nombreB] : 999;
+          
+          // Si tienen el mismo orden o no están en la lista, ordenar alfabéticamente
+          if (ordenA === ordenB) {
+            return nombreA.localeCompare(nombreB);
+          }
           return ordenA - ordenB;
         })
       ];
+      
+      console.log("Categorías ordenadas:", categoriasOrdenadas.map(c => c.nombre));
       
       setCategorias(categoriasOrdenadas);
       setCategoriaActiva(null);
@@ -67,7 +75,6 @@ export default function TomarPedido() {
     }
   }
 
-  // 🆕 RENOMBRAR CLIENTE
   function renombrarCliente(clienteId, nuevoNombre) {
     if (!nuevoNombre.trim()) return;
     
@@ -131,7 +138,6 @@ export default function TomarPedido() {
       }
     }));
     
-    // 🆕 FEEDBACK VISUAL
     const card = document.querySelector(`[data-producto-id="${producto.id}"]`);
     if (card) {
       card.style.transform = 'scale(0.95)';
@@ -182,41 +188,6 @@ export default function TomarPedido() {
     }));
   }
 
-  // 🆕 COPIAR PEDIDO DE UN CLIENTE A OTRO
-  function copiarPedido(clienteOrigenId, clienteDestinoId) {
-    const clienteOrigen = clientes.find(c => c.id === clienteOrigenId);
-    if (!clienteOrigen || clienteOrigen.pedido.length === 0) return;
-    
-    setClientes(clientes.map(cliente => {
-      if (cliente.id === clienteDestinoId) {
-        // Agregar productos del origen al destino
-        const nuevosPedidos = [...cliente.pedido];
-        
-        clienteOrigen.pedido.forEach(itemOrigen => {
-          const existe = nuevosPedidos.find(item => item.id === itemOrigen.id);
-          if (existe) {
-            // Sumar cantidades
-            nuevosPedidos.forEach((item, idx) => {
-              if (item.id === itemOrigen.id) {
-                nuevosPedidos[idx] = {
-                  ...item,
-                  cantidad: item.cantidad + itemOrigen.cantidad
-                };
-              }
-            });
-          } else {
-            // Agregar nuevo
-            nuevosPedidos.push({ ...itemOrigen });
-          }
-        });
-        
-        return { ...cliente, pedido: nuevosPedidos };
-      }
-      return cliente;
-    }));
-  }
-
-  // 🆕 DUPLICAR PEDIDO (para "lo mismo que el cliente 1")
   function duplicarPedido(clienteId) {
     const cliente = clientes.find(c => c.id === clienteId);
     if (!cliente || cliente.pedido.length === 0) return;
@@ -275,7 +246,6 @@ export default function TomarPedido() {
     }
   }
 
-  // 🆕 FILTRADO MEJORADO (con búsqueda)
   let productosFiltrados = categoriaActiva === null
     ? productos
     : productos.filter(p => p.id_categoria === categoriaActiva);
@@ -287,7 +257,6 @@ export default function TomarPedido() {
   }
 
   const clienteSeleccionado = clientes.find(c => c.id === clienteActivo);
-  const totalItemsActivo = clienteSeleccionado?.pedido.reduce((sum, item) => sum + item.cantidad, 0) || 0;
   const totalItemsGeneral = clientes.reduce((sum, c) => 
     sum + c.pedido.reduce((s, item) => s + item.cantidad, 0), 0
   );
@@ -336,7 +305,7 @@ export default function TomarPedido() {
           </div>
         )}
 
-        {/* 🆕 SELECTOR DE CLIENTES MEJORADO */}
+        {/* SELECTOR DE CLIENTES */}
         <div className="clientes-selector">
           <div className="clientes-tabs">
             {clientes.map(cliente => {
@@ -371,7 +340,6 @@ export default function TomarPedido() {
                     )}
                   </button>
                   
-                  {/* 🆕 MENÚ CONTEXTUAL */}
                   {cliente.pedido.length > 0 && clienteActivo === cliente.id && (
                     <button
                       className="cliente-tab-menu"
@@ -390,13 +358,12 @@ export default function TomarPedido() {
             </button>
           </div>
           
-          {/* 🆕 TIP VISUAL */}
           <div className="cliente-tip">
             <small>💡 Doble clic en un cliente para renombrar</small>
           </div>
         </div>
 
-        {/* 🆕 BARRA DE BÚSQUEDA */}
+        {/* BARRA DE BÚSQUEDA */}
         <div className="search-bar">
           <input
             type="text"
@@ -412,7 +379,7 @@ export default function TomarPedido() {
           )}
         </div>
 
-        {/* Categorías (ORDEN ESPECÍFICO) */}
+        {/* CATEGORÍAS ORDENADAS */}
         <div className="categorias-tabs">
           {categorias.map(cat => (
             <button
@@ -425,7 +392,7 @@ export default function TomarPedido() {
           ))}
         </div>
 
-        {/* Productos */}
+        {/* PRODUCTOS */}
         <div className="productos-grid">
           {productosFiltrados.length === 0 ? (
             <div className="empty-state">
@@ -476,7 +443,7 @@ export default function TomarPedido() {
           )}
         </div>
 
-        {/* Carrito flotante MEJORADO */}
+        {/* CARRITO FLOTANTE */}
         {totalItemsGeneral > 0 && (
           <div className="carrito-flotante" onClick={() => setMostrarResumen(true)}>
             <div className="carrito-info">
@@ -496,7 +463,7 @@ export default function TomarPedido() {
           </div>
         )}
 
-        {/* MODAL RESUMEN MEJORADO */}
+        {/* MODAL RESUMEN */}
         {mostrarResumen && (
           <div className="modal-overlay" onClick={() => setMostrarResumen(false)}>
             <div className="modal modal-large" onClick={(e) => e.stopPropagation()}>
@@ -615,7 +582,7 @@ export default function TomarPedido() {
         )}
       </div>
 
-      {/* ESTILOS MEJORADOS */}
+      {/* ESTILOS */}
       <style>{`
         @keyframes slideIn {
           from {
