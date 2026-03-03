@@ -1,5 +1,5 @@
 // src/pages/MisComandas.jsx
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiFetch } from "../api";
 
@@ -8,44 +8,78 @@ export default function MisComandas() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const navigate = useNavigate();
-  const user = JSON.parse(localStorage.getItem("user") || "{}");
 
-  useEffect(() => {
-    cargarComandas();
-    const interval = setInterval(cargarComandas, 10000); // Actualizar cada 10s
-    return () => clearInterval(interval);
+  // Parsear user una sola vez por render (y manejar caso vacío)
+  const user = useMemo(() => {
+    try {
+      return JSON.parse(localStorage.getItem("user") || "{}");
+    } catch {
+      return {};
+    }
   }, []);
 
-  async function cargarComandas() {
+  const cargarComandas = useCallback(async () => {
     try {
+      setError("");
       const data = await apiFetch("/api/comandas");
+
       // Filtrar solo mis comandas (del mesero actual) que no estén pagadas
-      const misComandas = data.filter(c => 
-        c.id_mesero === user.id && c.estado !== "PAGADA"
-      );
+      const misComandas = Array.isArray(data)
+        ? data.filter((c) => c.id_mesero === user.id && c.estado !== "PAGADA")
+        : [];
+
       setComandas(misComandas);
       setLoading(false);
     } catch (err) {
       setError(err.message || "Error al cargar comandas");
       setLoading(false);
     }
-  }
+  }, [user.id]);
+
+  useEffect(() => {
+    let alive = true;
+
+    const run = async () => {
+      if (!alive) return;
+      await cargarComandas();
+    };
+
+    run();
+
+    const interval = setInterval(() => {
+      if (!alive) return;
+      cargarComandas();
+    }, 10000); // Actualizar cada 10s
+
+    return () => {
+      alive = false;
+      clearInterval(interval);
+    };
+  }, [cargarComandas]);
 
   function getBadgeClass(estado) {
     switch (estado) {
-      case "PENDIENTE": return "badge-warning";
-      case "EN_PREPARACION": return "badge-info";
-      case "LISTO": return "badge-success";
-      default: return "badge-warning";
+      case "PENDIENTE":
+        return "badge-warning";
+      case "EN_PREPARACION":
+        return "badge-info";
+      case "LISTO":
+        return "badge-success";
+      default:
+        return "badge-warning";
     }
   }
 
   function getEstadoTexto(estado) {
     switch (estado) {
-      case "PENDIENTE": return "Pendiente";
-      case "EN_PREPARACION": return "En cocina";
-      case "LISTO": return "Listo";
-      default: return estado;
+      case "PENDIENTE":
+        return "Pendiente";
+      case "EN_PREPARACION":
+        return "En cocina";
+      case "LISTO":
+        return "Listo";
+      default:
+        return estado;
     }
   }
 
@@ -100,18 +134,20 @@ export default function MisComandas() {
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            {comandas.map(comanda => (
+            {comandas.map((comanda) => (
               <div key={comanda.id} className="card">
                 <div className="flex-between" style={{ marginBottom: 16 }}>
                   <div>
                     <h2 style={{ fontSize: 24, fontWeight: 800 }}>
                       Mesa {comanda.mesa}
                     </h2>
-                    <p style={{ 
-                      fontSize: 13, 
-                      color: "var(--color-text-secondary)",
-                      marginTop: 4
-                    }}>
+                    <p
+                      style={{
+                        fontSize: 13,
+                        color: "var(--color-text-secondary)",
+                        marginTop: 4,
+                      }}
+                    >
                       {new Date(comanda.creado_en).toLocaleString("es-CL", {
                         day: "2-digit",
                         month: "short",
@@ -133,9 +169,7 @@ export default function MisComandas() {
                           {detalle.cantidad}x {detalle.nombre_producto}
                         </div>
                         {detalle.notas && (
-                          <div className="item-detalles">
-                            💬 {detalle.notas}
-                          </div>
+                          <div className="item-detalles">💬 {detalle.notas}</div>
                         )}
                         {detalle.cliente_nro && (
                           <div className="item-detalles">
@@ -151,16 +185,18 @@ export default function MisComandas() {
                 </ul>
 
                 {comanda.estado === "LISTO" && (
-                  <div style={{ 
-                    marginTop: 16, 
-                    padding: 16, 
-                    background: "rgba(16, 185, 129, 0.1)",
-                    borderRadius: "var(--radius-md)",
-                    border: "1px solid rgba(16, 185, 129, 0.3)",
-                    textAlign: "center",
-                    color: "var(--color-success)",
-                    fontWeight: 700
-                  }}>
+                  <div
+                    style={{
+                      marginTop: 16,
+                      padding: 16,
+                      background: "rgba(16, 185, 129, 0.1)",
+                      borderRadius: "var(--radius-md)",
+                      border: "1px solid rgba(16, 185, 129, 0.3)",
+                      textAlign: "center",
+                      color: "var(--color-success)",
+                      fontWeight: 700,
+                    }}
+                  >
                     ✅ Pedido listo para servir
                   </div>
                 )}
