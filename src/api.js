@@ -1,38 +1,44 @@
 // src/api.js
-
-// CRA (react-scripts):
-// En Vercel: REACT_APP_API_URL = https://backend-comandas-7nds.onrender.com
-// En local:  REACT_APP_API_URL = http://localhost:3000
-export const API = process.env.REACT_APP_API_URL || "http://localhost:3000";
+export const API = "https://backend-comandas-7nds.onrender.com";
 
 export async function apiFetch(path, options = {}) {
   const token =
     typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
+  const method = options.method || "GET";
+
+  const headers = {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(options.headers || {}),
+  };
+
+  const body =
+    options.body == null
+      ? undefined
+      : typeof options.body === "string"
+      ? options.body
+      : JSON.stringify(options.body);
+
   const res = await fetch(`${API}${path}`, {
-    method: options.method || "GET",
+    method,
     credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers || {}),
-    },
-    ...(options.body != null ? { body: JSON.stringify(options.body) } : {}),
+    headers,
+    body,
   });
 
-  const text = await res.text();
-  let data = null;
+  let data;
   try {
-    data = text ? JSON.parse(text) : null;
+    data = await res.json();
   } catch {
-    data = text || null;
+    data = null;
   }
 
   if (!res.ok) {
     const msg =
       data && typeof data === "object"
         ? data.error || data.message || "Error en la petición"
-        : data || "Error en la petición";
+        : "Error en la petición";
     throw new Error(msg);
   }
 
