@@ -1,8 +1,9 @@
 // src/api.js
 
-// En Vercel: VITE_API_URL = https://backend-comandas-7nds.onrender.com
-// En local:  VITE_API_URL = http://localhost:3000
-export const API = import.meta.env.VITE_API_URL || "http://localhost:3000";
+// CRA (react-scripts):
+// En Vercel: REACT_APP_API_URL = https://backend-comandas-7nds.onrender.com
+// En local:  REACT_APP_API_URL = http://localhost:3000
+export const API = process.env.REACT_APP_API_URL || "http://localhost:3000";
 
 export async function apiFetch(path, options = {}) {
   const token =
@@ -29,9 +30,9 @@ export async function apiFetch(path, options = {}) {
 
   if (!res.ok) {
     const msg =
-      (data && typeof data === "object" && (data.error || data.message))
-        ? (data.error || data.message)
-        : "Error en la petición";
+      data && typeof data === "object"
+        ? data.error || data.message || "Error en la petición"
+        : data || "Error en la petición";
     throw new Error(msg);
   }
 
